@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Streamlit secrets (절대 커밋 금지)
+.streamlit/secrets.toml
+
+# 로컬 임시
+*.log
+.DS_Store
+
+# 데이터(data/series.parquet, data/meta.json, data/pmi_manual.csv)는
+# 의도적으로 커밋한다 → 무시하지 않음

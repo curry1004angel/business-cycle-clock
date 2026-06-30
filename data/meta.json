@@ -1,0 +1,22 @@
+{
+  "updated_at": "2026-06-30T13:14:50+00:00",
+  "rows": 342,
+  "last_month": "2026-06-30",
+  "columns": [
+    "sp500",
+    "sentiment",
+    "yield_spread",
+    "philly_fed",
+    "empire_state",
+    "indpro",
+    "retail",
+    "caputil",
+    "exports",
+    "gdp",
+    "unemploy",
+    "wages",
+    "hours",
+    "nber_rec",
+    "cpi"
+  ]
+}
