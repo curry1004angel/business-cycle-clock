@@ -10,7 +10,7 @@ import streamlit as st
 
 from src.fetch import load
 from src.composite import build_composites, momentum
-from src.classify import classify, confidence, PHASE_EN
+from src.classify import classify, confidence, phase_duration, PHASE_EN
 from src.indicators import INDICATORS, GROUP_KO, by_key
 from src.rotation import ROTATION, PHASE_COLORS
 
@@ -59,6 +59,7 @@ valid = result.dropna(subset=["phase"])
 latest = valid.iloc[-1]
 phase = latest["phase"]
 conf = confidence(latest)
+dur = phase_duration(result)
 asof = valid.index[-1].strftime("%Y-%m")
 color = PHASE_COLORS[phase]
 
@@ -71,15 +72,25 @@ st.markdown(f"## 📊 미국 경기 국면 판단 &nbsp;·&nbsp; 기준월 {asof
 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
 c1.markdown(
     f"<div style='background:{color};color:#fff;padding:16px;border-radius:12px;text-align:center'>"
-    f"<div style='font-size:13px;opacity:.85'>현재 국면 · {PHASE_EN[phase]}</div>"
+    f"<div style='font-size:13px;opacity:.85'>현재 국면 · {PHASE_EN[phase]} · {dur}개월째</div>"
     f"<div style='font-size:38px;font-weight:800;line-height:1.1'>{phase}</div>"
     f"<div style='font-size:13px;opacity:.9'>{ROTATION[phase]['risk']}</div></div>",
     unsafe_allow_html=True,
 )
+
+
+def _dir(v):
+    return "▲ 상승" if v > 0 else "▼ 하락"
+
+
 c2.metric("판정 신뢰도", f"{conf}%")
-c3.metric("선행 모멘텀", f"{latest['lead_mom']:+.2f}")
-c4.metric("후행 모멘텀", f"{latest['lag_mom']:+.2f}")
-if conf < 25:
+c3.metric("선행지표 방향", _dir(latest["lead_mom"]), f"{latest['lead_mom']:+.2f}")
+c4.metric("후행지표 방향", _dir(latest["lag_mom"]), f"{latest['lag_mom']:+.2f}")
+
+# 원시 사분면이 확정 국면과 다르면 = 전환 후보 관찰 중
+if pd.notna(latest.get("raw_phase")) and latest["raw_phase"] != phase:
+    st.info(f"👀 최근 지표는 **{latest['raw_phase']}** 방향입니다 — 3개월 연속 지속되면 국면이 전환됩니다.")
+elif conf < 25:
     st.warning("⚠️ 신뢰도가 낮습니다 — 국면 경계(모멘텀 0 부근)일 가능성이 큽니다.")
 
 
@@ -140,11 +151,35 @@ def composite_chart(comp, df, years=12):
     return fig
 
 
+def phase_timeline(res, years=12):
+    """확정 국면 히스토리를 색 띠로 표시."""
+    ph = res["phase"].dropna()
+    start = ph.index.max() - pd.DateOffset(years=years)
+    ph = ph[ph.index >= start]
+    fig = go.Figure()
+    runs = ph.groupby((ph != ph.shift()).cumsum())
+    for _, seg in runs:
+        p = seg.iloc[0]
+        fig.add_trace(go.Bar(
+            x=[(seg.index[-1] - seg.index[0]).days + 30], y=[""],
+            base=[seg.index[0]], orientation="h",
+            marker=dict(color=PHASE_COLORS[p]), name=p,
+            hovertemplate=f"{p} · {seg.index[0].strftime('%Y-%m')}~{seg.index[-1].strftime('%Y-%m')} ({len(seg)}개월)<extra></extra>",
+            showlegend=False,
+        ))
+    fig.update_layout(height=90, barmode="stack", margin=dict(l=10, r=10, t=5, b=5),
+                      xaxis=dict(type="date"), yaxis=dict(visible=False))
+    return fig
+
+
 left, right = st.columns(2)
-left.subheader("🧭 경기 시계 (최근 12개월)")
-left.plotly_chart(phase_clock(result), width="stretch")
+left.subheader("🧭 경기 시계 (최근 24개월)")
+left.plotly_chart(phase_clock(result, n=24), width="stretch")
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
 right.plotly_chart(composite_chart(composites, df), width="stretch")
+
+st.subheader("🗓️ 국면 히스토리 (최근 12년)")
+st.plotly_chart(phase_timeline(result), width="stretch")
 
 
 # ─────────────────────────────────────────────────────────────
