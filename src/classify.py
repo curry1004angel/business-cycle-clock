@@ -9,11 +9,14 @@
 
 동행지표(바닥→상승→전환→하락)는 판정 확신도(confidence) 보정에 쓴다.
 
-노이즈 억제 장치 2개 (1999~2026 백테스트로 파라미터 선정):
+노이즈 억제 장치 (1999~2026 백테스트로 파라미터 선정):
   1) 중립대(DEADBAND): 모멘텀 |z|<0.10 이면 방향을 바꾸지 않고 직전 방향 유지
-  2) 확정규칙(CONFIRM): 새 국면이 3개월 연속 관측되어야 공식 국면 전환
-→ 27년간 전환 105회(평균 3.2개월) → 31회(평균 10.5개월)로 안정화,
-  NBER 침체월의 89%를 침체로 포착 (닷컴 00.12, 금융위기 08.04, 2022긴축 22.09 진입).
+  2) 중립대 만료(HOLD_MAX): 단, 6개월 넘게 중립대에 머물면 직전 방향이 낡은
+     정보가 되므로 현재 부호를 따름 — 2025년 후행 모멘텀이 1년 내내 중립대에
+     있으면서 옛 '하락'을 끌고 와 연착륙(둔화)을 침체로 오판했던 결함의 수정
+  3) 확정규칙(CONFIRM): 새 국면이 3개월 연속 관측되어야 공식 국면 전환
+→ 27년간 전환 105회(평균 3.2개월) → 32회(평균 10.2개월)로 안정화,
+  NBER 침체월의 93%를 침체로 포착 (닷컴 00.11, 금융위기 08.03, 2022긴축 22.09 진입).
 """
 
 import numpy as np
@@ -25,6 +28,7 @@ PHASE_KO = ["회복", "성장", "둔화", "침체"]
 PHASE_EN = {"회복": "Recovery", "성장": "Growth", "둔화": "Slowdown", "침체": "Recession"}
 
 DEADBAND = 0.10  # 모멘텀 중립대: 이보다 작으면 방향 전환으로 안 봄
+HOLD_MAX = 6     # 중립대에서 직전 방향을 유지하는 최대 개월 수(만료)
 CONFIRM = 3      # 국면 전환 확정에 필요한 연속 개월 수
 
 
@@ -38,15 +42,23 @@ def _phase(lead_dir, lag_dir):
     return "침체"
 
 
-def _sign_hold(m, deadband=DEADBAND):
-    """중립대 안(|m|<deadband)에서는 직전 방향을 유지하는 부호 시리즈."""
-    out, prev = [], 1.0
+def _sign_hold(m, deadband=DEADBAND, hold_max=HOLD_MAX):
+    """중립대 안(|m|<deadband)에서는 직전 방향 유지 — 단 hold_max개월까지만.
+
+    그 이상 머물면 직전 방향은 낡은 정보이므로 현재 부호(약해도)를 따른다.
+    """
+    out, prev, held = [], 1.0, 0
     for v in m:
         if pd.isna(v):
             out.append(np.nan)
             continue
         if abs(v) >= deadband:
             prev = 1.0 if v > 0 else -1.0
+            held = 0
+        else:
+            held += 1
+            if held > hold_max:
+                prev = 1.0 if v > 0 else -1.0
         out.append(prev)
     return pd.Series(out, index=m.index)
 
