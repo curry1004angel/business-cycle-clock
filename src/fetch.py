@@ -70,10 +70,38 @@ def fetch_all(start="1998-01-01"):
 
 
 def load():
-    """캐시 우선 로드. parquet 없으면 라이브 수집."""
+    """캐시 우선 로드. parquet 없으면 라이브 수집.
+
+    수동 PMI는 parquet 갱신 주기(월 1회)와 무관하게 항상 CSV 최신값을
+    덮어써서 입력 즉시 반영되게 한다.
+    """
     if os.path.exists(PARQUET):
         try:
-            return pd.read_parquet(PARQUET)
+            df = pd.read_parquet(PARQUET)
         except Exception as e:
             print(f"[warn] parquet 읽기 실패, 라이브 수집으로 대체: {e}")
+            return fetch_all()
+        try:
+            s = _manual_pmi().resample("ME").mean()
+            df = df.drop(columns=["pmi_manual"], errors="ignore")
+            df = df.join(s.rename("pmi_manual"), how="left")
+        except Exception:
+            pass  # 수동 PMI 없으면 그대로
+        return df
     return fetch_all()
+
+
+def upsert_manual_pmi(month, value):
+    """data/pmi_manual.csv 에 해당 월(YYYY-MM) 값을 추가/갱신하고 CSV 전문을 반환."""
+    if os.path.exists(MANUAL_PMI):
+        m = pd.read_csv(MANUAL_PMI).dropna()
+    else:
+        m = pd.DataFrame(columns=["date", "pmi"])
+    m["date"] = m["date"].astype(str).str[:7]
+    m = m[m["date"] != month[:7]]
+    m.loc[len(m)] = [month[:7], float(value)]
+    m = m.sort_values("date")
+    m["date"] = m["date"] + "-01"
+    os.makedirs(DATA_DIR, exist_ok=True)
+    m.to_csv(MANUAL_PMI, index=False)
+    return m.to_csv(index=False)

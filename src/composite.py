@@ -23,11 +23,14 @@ def _zscore(s):
     return (s - s.mean()) / sd
 
 
+MIN_OBS = 12  # 표본이 이보다 적으면 z-score가 왜곡되므로 합성에서 제외
+
+
 def build_components(df):
     """지표별 변환·표준화된 z-score DataFrame."""
     cols = {}
     for ind in INDICATORS:
-        if ind.key in df.columns and df[ind.key].notna().any():
+        if ind.key in df.columns and df[ind.key].notna().sum() >= MIN_OBS:
             cols[ind.key] = _zscore(_transform(df[ind.key], ind.transform, ind.invert))
     return pd.DataFrame(cols, index=df.index)
 

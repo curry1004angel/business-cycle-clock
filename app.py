@@ -5,10 +5,11 @@
 """
 
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.fetch import load
+from src.fetch import load, upsert_manual_pmi, MANUAL_PMI
 from src.composite import build_composites, momentum
 from src.classify import classify, confidence, phase_duration, PHASE_EN
 from src.indicators import INDICATORS, GROUP_KO, by_key
@@ -156,19 +157,22 @@ def phase_timeline(res, years=12):
     ph = res["phase"].dropna()
     start = ph.index.max() - pd.DateOffset(years=years)
     ph = ph[ph.index >= start]
-    fig = go.Figure()
-    runs = ph.groupby((ph != ph.shift()).cumsum())
-    for _, seg in runs:
-        p = seg.iloc[0]
-        fig.add_trace(go.Bar(
-            x=[(seg.index[-1] - seg.index[0]).days + 30], y=[""],
-            base=[seg.index[0]], orientation="h",
-            marker=dict(color=PHASE_COLORS[p]), name=p,
-            hovertemplate=f"{p} · {seg.index[0].strftime('%Y-%m')}~{seg.index[-1].strftime('%Y-%m')} ({len(seg)}개월)<extra></extra>",
-            showlegend=False,
-        ))
-    fig.update_layout(height=90, barmode="stack", margin=dict(l=10, r=10, t=5, b=5),
-                      xaxis=dict(type="date"), yaxis=dict(visible=False))
+    rows = []
+    for _, seg in ph.groupby((ph != ph.shift()).cumsum()):
+        rows.append({
+            "국면": seg.iloc[0],
+            "시작": seg.index[0] - pd.DateOffset(months=1),  # 월말 인덱스 → 해당 월 폭 확보
+            "끝": seg.index[-1],
+            "기간": f"{seg.index[0].strftime('%Y-%m')} ~ {seg.index[-1].strftime('%Y-%m')} ({len(seg)}개월)",
+            "y": "",
+        })
+    fig = px.timeline(pd.DataFrame(rows), x_start="시작", x_end="끝", y="y",
+                      color="국면", color_discrete_map=PHASE_COLORS,
+                      hover_data={"기간": True, "시작": False, "끝": False, "y": False},
+                      category_orders={"국면": ["회복", "성장", "둔화", "침체"]})
+    fig.update_layout(height=110, margin=dict(l=10, r=10, t=5, b=5),
+                      yaxis=dict(visible=False), xaxis_title=None,
+                      legend=dict(orientation="h", title=None, y=1.6))
     return fig
 
 
@@ -180,6 +184,11 @@ right.plotly_chart(composite_chart(composites, df), width="stretch")
 
 st.subheader("🗓️ 국면 히스토리 (최근 12년)")
 st.plotly_chart(phase_timeline(result), width="stretch")
+st.caption(
+    "이상적 순환은 회복→성장→둔화→침체 순이지만, 실제로는 역행도 나타납니다 — "
+    "둔화→성장(재가속·연착륙), 회복→침체(가짜 회복), 성장→침체(급락, 예: 코로나). "
+    "1999~2026년 전환 31회 중 정방향 19회 · 역행/건너뜀 12회."
+)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -212,8 +221,68 @@ with st.expander("📋 지표별 상세 (표준화값 · 방향)"):
                      "비고": ind.note})
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
+# ─────────────────────────────────────────────────────────────
+# 실제 PMI 수동 입력 (웹에서 바로)
+# ─────────────────────────────────────────────────────────────
+def push_pmi_to_github(csv_text):
+    """secrets에 [github] token/repo 있으면 커밋(영구 저장). 없으면 None."""
+    try:
+        gh = st.secrets["github"]
+        token, repo = gh["token"], gh["repo"]
+    except Exception:
+        return None
+    import base64
+    import requests
+    api = f"https://api.github.com/repos/{repo}/contents/data/pmi_manual.csv"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    r = requests.get(api, headers=headers, timeout=15)
+    payload = {
+        "message": "data: PMI 수동 입력 (웹)",
+        "content": base64.b64encode(csv_text.encode()).decode(),
+    }
+    if r.status_code == 200:
+        payload["sha"] = r.json()["sha"]
+    requests.put(api, headers=headers, json=payload, timeout=15).raise_for_status()
+    return True
+
+
+with st.expander("📝 실제 PMI 수동 입력 (ISM 발표 후, 선택)"):
+    if msg := st.session_state.pop("pmi_saved", None):
+        st.success(msg)
+    st.caption(
+        "매월 1영업일 ISM(또는 S&P Global) 발표 후 헤드라인 PMI를 입력하세요. "
+        "입력 즉시 화면에 반영되고, 12개월 이상 쌓이면 선행지표 합성에도 포함됩니다."
+    )
+    months = [(pd.Timestamp.today().replace(day=1) - pd.DateOffset(months=i)).strftime("%Y-%m")
+              for i in range(1, 19)]
+    with st.form("pmi_form"):
+        fc1, fc2, fc3 = st.columns([1, 1, 1])
+        in_month = fc1.selectbox("대상 월", months)
+        in_val = fc2.number_input("PMI 값", min_value=20.0, max_value=80.0, value=50.0, step=0.1)
+        fc3.markdown("<br>", unsafe_allow_html=True)
+        if fc3.form_submit_button("💾 저장"):
+            csv_text = upsert_manual_pmi(in_month, in_val)   # 로컬 즉시 반영
+            pushed = None
+            try:
+                pushed = push_pmi_to_github(csv_text)        # 토큰 있으면 영구 저장
+            except Exception as e:
+                st.error(f"GitHub 저장 실패(로컬엔 반영됨): {e}")
+            st.session_state["pmi_saved"] = (
+                f"{in_month} = {in_val} 저장 완료"
+                + (" · GitHub 커밋됨(영구 저장)" if pushed
+                   else " · ⚠️ 이 값은 재배포 시 사라집니다 — 영구 저장은 secrets에 [github] token 설정")
+            )
+            get_data.clear()
+            st.rerun()
+    try:
+        entries = pd.read_csv(MANUAL_PMI).dropna()
+        if not entries.empty:
+            st.dataframe(entries.tail(12), width="stretch", hide_index=True)
+    except Exception:
+        pass
+
 st.caption(
     f"데이터 최신월: {df.index[-1].strftime('%Y-%m')} · "
     "출처: FRED, Yahoo Finance · 제조업 선행신호는 지역 연준 서베이(필라델피아·엠파이어스테이트). "
-    "실제 ISM/S&P PMI는 data/pmi_manual.csv 에 입력 시 함께 반영됩니다."
+    "실제 ISM/S&P PMI는 위 입력폼 또는 GitHub의 data/pmi_manual.csv 편집으로 추가할 수 있습니다."
 )
