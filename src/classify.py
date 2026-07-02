@@ -125,13 +125,55 @@ def phase_duration(result):
     return n
 
 
+def _pct_rank(history, value):
+    """|value|가 |history| 분포에서 상위 몇 %인지 (0~100)."""
+    h = history.abs().dropna()
+    if h.empty or pd.isna(value):
+        return 50.0
+    return float((h <= abs(value)).mean() * 100)
+
+
+def confidence_detail(result, t=None):
+    """판정 신뢰도(0~100)와 구성 요소.
+
+    구성 (가중합):
+      선행 모멘텀 강도 40% — 현재 |선행 모멘텀|의 1999~ 역사적 백분위
+      후행 모멘텀 강도 30% — 현재 |후행 모멘텀|의 역사적 백분위
+      동행지표 일치   30% — 동행 방향이 국면 기대와 일치하면 50+강도/2,
+                             역행하면 50-강도/2 (중립 50)
+
+    해석: ~50 = 역사적 평균 수준의 신호, 70↑ = 국면 한복판의 강한 신호,
+    30↓ = 모멘텀이 약한 경계 구간(전환 가능성).
+    """
+    valid = result.dropna(subset=["phase"])
+    row = valid.loc[t] if t is not None else valid.iloc[-1]
+
+    lead_pct = _pct_rank(valid["lead_mom"], row["lead_mom"])
+    lag_pct = _pct_rank(valid["lag_mom"], row["lag_mom"])
+
+    expected_up = row["phase"] in ("회복", "성장")  # 회복·성장이면 동행 상승이 정상
+    if pd.isna(row["coin_mom"]):
+        coin_score = 50.0
+    else:
+        coin_pct = _pct_rank(valid["coin_mom"], row["coin_mom"])
+        agree = (row["coin_mom"] > 0) == expected_up
+        coin_score = 50 + coin_pct / 2 if agree else 50 - coin_pct / 2
+
+    total = 0.4 * lead_pct + 0.3 * lag_pct + 0.3 * coin_score
+    return {
+        "total": int(round(total)),
+        "lead": int(round(lead_pct)),
+        "lag": int(round(lag_pct)),
+        "coin": int(round(coin_score)),
+    }
+
+
 def confidence(row):
-    """0~100. 모멘텀 강도 + 동행지표의 방향 일치도로 보정."""
+    """(구버전 호환) 단일 행 기반 근사 — 새 코드는 confidence_detail 사용."""
     ls = np.tanh(abs(row["lead_mom"])) if pd.notna(row["lead_mom"]) else 0.0
     gs = np.tanh(abs(row["lag_mom"])) if pd.notna(row["lag_mom"]) else 0.0
     base = (ls + gs) / 2
-
-    expected_up = row["phase"] in ("회복", "성장")  # 회복·성장이면 동행 상승이 정상
+    expected_up = row["phase"] in ("회복", "성장")
     if pd.notna(row["coin_mom"]):
         agree = 1.0 if (row["coin_mom"] > 0) == expected_up else 0.6
     else:

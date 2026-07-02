@@ -11,7 +11,9 @@ import streamlit as st
 
 from src.fetch import load, upsert_manual_pmi, MANUAL_PMI
 from src.composite import build_composites, momentum
-from src.classify import classify, confidence, phase_duration, PHASE_EN
+from plotly.subplots import make_subplots
+
+from src.classify import classify, confidence_detail, phase_duration, PHASE_EN
 from src.indicators import INDICATORS, GROUP_KO, by_key
 from src.rotation import ROTATION, PHASE_COLORS
 
@@ -59,7 +61,8 @@ result = classify(composites)
 valid = result.dropna(subset=["phase"])
 latest = valid.iloc[-1]
 phase = latest["phase"]
-conf = confidence(latest)
+cdet = confidence_detail(result)
+conf = cdet["total"]
 dur = phase_duration(result)
 asof = valid.index[-1].strftime("%Y-%m")
 color = PHASE_COLORS[phase]
@@ -91,8 +94,24 @@ c4.metric("후행지표 방향", _dir(latest["lag_mom"]), f"{latest['lag_mom']:+
 # 원시 사분면이 확정 국면과 다르면 = 전환 후보 관찰 중
 if pd.notna(latest.get("raw_phase")) and latest["raw_phase"] != phase:
     st.info(f"👀 최근 지표는 **{latest['raw_phase']}** 방향입니다 — 3개월 연속 지속되면 국면이 전환됩니다.")
-elif conf < 25:
-    st.warning("⚠️ 신뢰도가 낮습니다 — 국면 경계(모멘텀 0 부근)일 가능성이 큽니다.")
+elif conf < 30:
+    st.warning("⚠️ 신뢰도가 낮습니다 — 모멘텀이 약한 경계 구간(전환 가능성)입니다.")
+
+with st.expander("ℹ️ 판정 신뢰도 구성 보기"):
+    st.caption(
+        "신뢰도 = **선행 모멘텀 강도 40% + 후행 모멘텀 강도 30% + 동행지표 일치 30%**. "
+        "강도는 현재 모멘텀 크기가 1999년 이후 역사에서 상위 몇 %인지(백분위), "
+        "일치는 동행지표 방향이 현재 국면의 기대 방향과 맞는지입니다. "
+        "**~50 = 역사적 평균 수준 · 70↑ = 국면 한복판의 강한 신호 · 30↓ = 경계 구간(전환 임박 가능)**. "
+        "값은 데이터가 결정하며, 국면 진입 초기엔 낮고 국면이 무르익을수록 올라가는 게 정상입니다."
+    )
+    b1, b2, b3 = st.columns(3)
+    b1.metric("선행 모멘텀 강도", f"{cdet['lead']}%", "가중치 40%", delta_color="off")
+    b1.progress(cdet["lead"] / 100)
+    b2.metric("후행 모멘텀 강도", f"{cdet['lag']}%", "가중치 30%", delta_color="off")
+    b2.progress(cdet["lag"] / 100)
+    b3.metric("동행지표 일치", f"{cdet['coin']}%", "가중치 30%", delta_color="off")
+    b3.progress(cdet["coin"] / 100)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -204,9 +223,27 @@ rc2.markdown("\n".join(f"- {x}" for x in r["sectors"]))
 
 
 # ─────────────────────────────────────────────────────────────
-# 지표별 상세
+# 지표별 상세 (요약 / 월별 차트 / 월별 표)
 # ─────────────────────────────────────────────────────────────
-with st.expander("📋 지표별 상세 (표준화값 · 방향)"):
+def _nber_shade(fig, start):
+    if "nber_rec" not in df.columns:
+        return
+    rec = df.loc[df.index >= start, "nber_rec"].fillna(0)
+    s = None
+    for t, v in (rec > 0).items():
+        if v and s is None:
+            s = t
+        elif not v and s is not None:
+            fig.add_vrect(x0=s, x1=t, fillcolor="gray", opacity=0.15, line_width=0)
+            s = None
+    if s is not None:
+        fig.add_vrect(x0=s, x1=rec.index[-1], fillcolor="gray", opacity=0.15, line_width=0)
+
+
+st.subheader("📋 지표별 상세")
+tab_sum, tab_chart, tab_table = st.tabs(["현재 요약", "월별 차트", "월별 표"])
+
+with tab_sum:
     rows = []
     for ind in INDICATORS:
         if ind.key not in comps.columns:
@@ -220,6 +257,53 @@ with st.expander("📋 지표별 상세 (표준화값 · 방향)"):
                      "표준화값(z)": round(float(z.iloc[-1]), 2), "방향": arrow,
                      "비고": ind.note})
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+with tab_chart:
+    opts = [ind for ind in INDICATORS
+            if ind.key in df.columns and df[ind.key].notna().any()]
+    sel = st.selectbox("지표 선택", opts,
+                       format_func=lambda i: f"[{GROUP_KO[i.group]}] {i.name_ko}")
+    yrs = st.radio("기간", [5, 12, 27], index=1, horizontal=True,
+                   format_func=lambda y: f"최근 {y}년")
+    start = df.index.max() - pd.DateOffset(years=yrs)
+    raw_s = df.loc[df.index >= start, sel.key]
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    _nber_shade(fig, start)
+    fig.add_trace(go.Scatter(x=raw_s.index, y=raw_s, name="원값",
+                             line=dict(color="#2E86DE")), secondary_y=False)
+    if sel.key in comps.columns:
+        z_s = comps[sel.key][comps.index >= start]
+        fig.add_trace(go.Scatter(x=z_s.index, y=z_s, name="표준화(z)",
+                                 line=dict(color="#E67E22", dash="dot")), secondary_y=True)
+        fig.add_hline(y=0, line_color="#bbb", line_dash="dot", secondary_y=True)
+    fig.update_yaxes(title_text="원값", secondary_y=False)
+    fig.update_yaxes(title_text="z-score", secondary_y=True)
+    fig.update_layout(height=400, margin=dict(l=10, r=10, t=30, b=10),
+                      legend=dict(orientation="h", y=1.1))
+    st.plotly_chart(fig, width="stretch")
+    if sel.transform == "yoy":
+        st.caption("이 지표는 전년동월비(YoY%)로 변환 후 표준화되어 합성에 들어갑니다. 회색 음영=NBER 침체.")
+    else:
+        st.caption("이 지표는 원값 그대로 표준화되어 합성에 들어갑니다. 회색 음영=NBER 침체."
+                   + (" 실업률은 경기와 반대로 움직여 부호를 뒤집어 반영합니다." if sel.invert else ""))
+
+with tab_table:
+    n_months = st.radio("표시 기간", [12, 24, 60], index=1, horizontal=True,
+                        format_func=lambda n: f"최근 {n}개월")
+    disp = {}
+    for ind in INDICATORS:
+        if ind.key not in df.columns or not df[ind.key].notna().any():
+            continue
+        s = df[ind.key]
+        if ind.transform == "yoy":
+            disp[f"{ind.name_ko} YoY%"] = (s.pct_change(12) * 100).round(1)
+        else:
+            disp[ind.name_ko] = s.round(2)
+    tbl = pd.DataFrame(disp).tail(n_months).iloc[::-1]
+    tbl.insert(0, "국면", result["phase"].reindex(tbl.index))
+    tbl.index = tbl.index.strftime("%Y-%m")
+    st.dataframe(tbl, width="stretch", height=420)
+    st.caption("모델에 들어가는 형태(YoY 변환 지표는 YoY%, 나머지는 원값) 기준. 최신월이 맨 위.")
 
 # ─────────────────────────────────────────────────────────────
 # 실제 PMI 수동 입력 (웹에서 바로)
