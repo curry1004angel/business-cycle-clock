@@ -1,7 +1,7 @@
 {
-  "updated_at": "2026-06-30T13:14:50+00:00",
-  "rows": 342,
-  "last_month": "2026-06-30",
+  "updated_at": "2026-07-03T14:22:18+00:00",
+  "rows": 343,
+  "last_month": "2026-07-31",
   "columns": [
     "sp500",
     "sentiment",
