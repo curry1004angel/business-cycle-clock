@@ -15,6 +15,8 @@
   발표되어 선행성이 더 빠르다.
   실제 ISM/S&P PMI 헤드라인을 보고 싶으면 data/pmi_manual.csv 에 월 1회 입력하면
   'pmi_manual' 지표로 합성에 함께 반영된다(비워두면 무시).
+  → 2026-07: FRED-MD 2015-07 빈티지(Wayback Machine 보존본)에서 실제 ISM PMI
+    1959-01~2015-06을 확보해 채워둠. 2015-07 이후는 수동 입력으로 보완.
 """
 
 from dataclasses import dataclass
