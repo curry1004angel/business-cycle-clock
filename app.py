@@ -171,11 +171,11 @@ def composite_chart(comp, df, years=12):
     return fig
 
 
-def phase_timeline(res, years=12):
+def phase_timeline(res, start=None):
     """확정 국면 히스토리를 색 띠로 표시."""
     ph = res["phase"].dropna()
-    start = ph.index.max() - pd.DateOffset(years=years)
-    ph = ph[ph.index >= start]
+    if start is not None:
+        ph = ph[ph.index >= start]
     rows = []
     for _, seg in ph.groupby((ph != ph.shift()).cumsum()):
         rows.append({
@@ -201,12 +201,21 @@ left.plotly_chart(phase_clock(result, n=24), width="stretch")
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
 right.plotly_chart(composite_chart(composites, df), width="stretch")
 
-st.subheader("🗓️ 국면 히스토리 (최근 12년)")
-st.plotly_chart(phase_timeline(result), width="stretch")
+st.subheader("🗓️ 국면 히스토리")
+span = st.radio("히스토리 기간", ["최근 12년", "2000년~", "전체(1975~)"],
+                horizontal=True, label_visibility="collapsed")
+span_start = {
+    "최근 12년": valid.index.max() - pd.DateOffset(years=12),
+    "2000년~": pd.Timestamp("2000-01-01"),
+    "전체(1975~)": None,
+}[span]
+st.plotly_chart(phase_timeline(result, span_start), width="stretch")
 st.caption(
     "이상적 순환은 회복→성장→둔화→침체 순이지만, 실제로는 역행도 나타납니다 — "
     "둔화→성장(재가속·연착륙), 회복→침체(가짜 회복), 성장→침체(급락, 예: 코로나). "
-    "1999~2026년 전환 32회 중 정방향 19회 · 역행/건너뜀 13회."
+    "1975~2026년 전환 70회 중 정방향 46회 · 역행/건너뜀 24회. "
+    "침체→성장처럼 회복을 건너뛰는 경우는 V자 반등(부양책 등)으로 후행지표가 빨리 돌아설 때 나타납니다. "
+    "1992년 이전은 가용 지표가 적어(소매판매·수출 없음) 판정 정밀도가 낮습니다."
 )
 
 

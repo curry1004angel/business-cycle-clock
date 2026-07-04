@@ -28,7 +28,9 @@ def _fred(code, start):
 
 def _yahoo(code, start):
     import yfinance as yf
-    df = yf.download(code, start=start, interval="1mo", progress=False, auto_adjust=True)
+    # 월봉(interval=1mo)은 과거 구간이 잘리는 경우가 있어 일봉으로 받는다
+    # (이후 공통 resample("ME")에서 월간화됨)
+    df = yf.download(code, start=start, interval="1d", progress=False, auto_adjust=True)
     close = df["Close"]
     if isinstance(close, pd.DataFrame):  # 멀티인덱스 컬럼 방어
         close = close.iloc[:, 0]
@@ -45,8 +47,13 @@ def _manual_pmi():
     return m.set_index("date").iloc[:, 0]
 
 
-def fetch_all(start="1998-01-01"):
-    """모든 지표를 받아 월말 기준 단일 DataFrame으로 반환."""
+def fetch_all(start="1975-01-01"):
+    """모든 지표를 받아 월말 기준 단일 DataFrame으로 반환.
+
+    1975년 시작 근거: 선행(S&P500·필라델피아연준 1968~·금리차 1976~·심리 1978~,
+    이전은 분기→ffill), 동행(산업생산·가동률), 후행(전부 1964~ 이전) 확보 가능.
+    소매판매·수출(1992~)·엠파이어(2001~)는 없는 기간엔 합성에서 자동 제외.
+    """
     frames = {}
     for ind in (INDICATORS + AUX):
         try:
@@ -66,6 +73,8 @@ def fetch_all(start="1998-01-01"):
     df = pd.DataFrame(frames)
     # 저빈도(분기 GDP 등) 결측은 직전값으로 채움
     df = df.resample("ME").mean().ffill()
+    # 진행 중인 달은 일간 시리즈 며칠치만 담긴 부분월이라 제외
+    df = df[df.index < pd.Timestamp.today().normalize().replace(day=1)]
     return df
 
 
