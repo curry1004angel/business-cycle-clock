@@ -71,8 +71,19 @@ def fetch_all(start="1975-01-01"):
             print(f"[warn] {ind.key} ({ind.code}) 수집 실패: {type(e).__name__}: {e}")
 
     df = pd.DataFrame(frames)
-    # 저빈도(분기 GDP 등) 결측은 직전값으로 채움
-    df = df.resample("ME").mean().ffill()
+    df = df.resample("ME").mean()
+    # 내부 결측(분기 GDP, 옛 분기 심리지수 등)은 직전값으로 채우되,
+    # 각 지표의 마지막 실제 관측 이후(=아직 미발표 달)는 채우지 않는다.
+    # 안 그러면 발표가 늦는 지표의 최신월이 이전 값 복제로 조작됨
+    # (예: 심리지수 5월 44.8이 6월에도 44.8로 복제 — 실제 6월은 49.5였음).
+    last_valid = {c: df[c].last_valid_index() for c in df.columns}
+    df = df.ffill()
+    for c in df.columns:
+        if c == "gdp":  # 분기 시리즈는 다음 분기까지 직전값 유지가 의도된 동작
+            continue
+        lv = last_valid[c]
+        if lv is not None:
+            df.loc[df.index > lv, c] = float("nan")
     # 진행 중인 달은 일간 시리즈 며칠치만 담긴 부분월이라 제외
     df = df[df.index < pd.Timestamp.today().normalize().replace(day=1)]
     return df
