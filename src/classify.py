@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 
 from .composite import momentum
+from .indicators import INDICATORS
+from .rotation import ROTATION
 
 PHASE_KO = ["회복", "성장", "둔화", "침체"]
 PHASE_EN = {"회복": "Recovery", "성장": "Growth", "둔화": "Slowdown", "침체": "Recession"}
@@ -123,6 +125,78 @@ def phase_duration(result):
             break
         n += 1
     return n
+
+
+# ─────────────────────────────────────────────────────────────
+# 5종 방향 라벨 + 패턴 일치도 (NH 스타일 보조 판정)
+# ─────────────────────────────────────────────────────────────
+# 문자열 비교로는 '반등'과 '상승'이 0점이 되어 일치도가 항상 바닥에 깔린다.
+# 방향을 수치화해 거리로 부분점수를 주기 위한 척도.
+DIRECTION_VALUE = {"상승": 1.0, "반등": 0.5, "바닥": 0.0, "전환": -0.5, "하락": -1.0}
+DIRECTION_ARROW = {"상승": "↑", "반등": "↗", "바닥": "→", "전환": "↷", "하락": "↓"}
+TURN_LAG = 3  # 방향 전환 판정에 쓰는 비교 시차(개월)
+
+
+def direction5(series, band=DEADBAND, turn_lag=TURN_LAG):
+    """5종 방향 라벨(상승/반등/바닥/전환/하락).
+
+    반등·전환은 모멘텀 부호가 turn_lag개월 전 대비 뒤집혔는지(2차 정보)로,
+    바닥은 모멘텀이 중립대 안이면서 수준이 평균 이하인지로 판정한다.
+    """
+    if series is None or series.dropna().empty:
+        return None
+    m = momentum(series).dropna()
+    if m.empty:
+        return None
+    cur = float(m.iloc[-1])
+    prev = float(m.iloc[-1 - turn_lag]) if len(m) > turn_lag else np.nan
+    lvl = series.dropna()
+    level = float(lvl.iloc[-1]) if not lvl.empty else np.nan
+
+    if pd.notna(prev):
+        if cur > 0 and prev <= 0:
+            return "반등"
+        if cur < 0 and prev >= 0:
+            return "전환"
+    if abs(cur) <= band and (pd.isna(level) or level <= 0):
+        return "바닥"
+    return "상승" if cur > 0 else "하락"
+
+
+def _score(actual, expected):
+    """방향 두 개의 일치도 0~1 (최대 거리 2.0 = 상승 vs 하락)."""
+    return 1.0 - abs(DIRECTION_VALUE[actual] - DIRECTION_VALUE[expected]) / 2.0
+
+
+def pattern_match(composites, comps):
+    """국면별 패턴 일치도(%) + 방향 라벨.
+
+    반환: (scores, group_dirs, ind_dirs)
+      scores     : {국면: 일치도%}  — 지표 14개 단위 채점(그룹 3개보다 동점 적음)
+      group_dirs : {선행/동행/후행: 방향}  — 화면 상단 요약용
+      ind_dirs   : [(그룹, 지표명, 방향)]  — 지표별 상세용
+    """
+    # ROTATION["회복"]["indicator"] 의 키에 맞춘 짧은 그룹명
+    SHORT = {"leading": "선행", "coincident": "동행", "lagging": "후행"}
+
+    group_dirs, ind_dirs = {}, []
+    for g, ko in SHORT.items():
+        if g in composites:
+            d = direction5(composites[g])
+            if d:
+                group_dirs[ko] = d
+    for ind in INDICATORS:
+        if ind.key in comps.columns:
+            d = direction5(comps[ind.key])
+            if d:
+                ind_dirs.append((SHORT[ind.group], ind.name_ko, d))
+
+    scores = {}
+    for phase, spec in ROTATION.items():
+        exp = spec["indicator"]  # {"선행": "반등", "동행": "바닥", "후행": "하락"}
+        vals = [_score(d, exp[grp]) for grp, _name, d in ind_dirs if grp in exp]
+        scores[phase] = round(100 * sum(vals) / len(vals), 1) if vals else 0.0
+    return scores, group_dirs, ind_dirs
 
 
 def _pct_rank(history, value):

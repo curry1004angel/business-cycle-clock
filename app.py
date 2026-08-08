@@ -13,9 +13,10 @@ from src.fetch import load, upsert_manual_pmi, MANUAL_PMI
 from src.composite import build_composites, momentum
 from plotly.subplots import make_subplots
 
-from src.classify import classify, confidence_detail, phase_duration, PHASE_EN
+from src.classify import (classify, confidence_detail, phase_duration,
+                          pattern_match, DIRECTION_ARROW, PHASE_EN)
 from src.indicators import INDICATORS, GROUP_KO, by_key
-from src.rotation import ROTATION, PHASE_COLORS
+from src.rotation import ROTATION, PHASE_COLORS, PHASE_ORDER
 
 st.set_page_config(page_title="경기 국면 판단", page_icon="📊", layout="wide")
 
@@ -96,6 +97,40 @@ if pd.notna(latest.get("raw_phase")) and latest["raw_phase"] != phase:
     st.info(f"👀 최근 지표는 **{latest['raw_phase']}** 방향입니다 — 3개월 연속 지속되면 국면이 전환됩니다.")
 elif conf < 30:
     st.warning("⚠️ 신뢰도가 낮습니다 — 모멘텀이 약한 경계 구간(전환 가능성)입니다.")
+
+match_scores, group_dirs, ind_dirs = pattern_match(composites, comps)
+
+# ── 4국면 카드 띠 (현재 국면 강조) ─────────────────────────────
+st.write("")
+cards = st.columns(4)
+for col, p in zip(cards, PHASE_ORDER):
+    spec = ROTATION[p]
+    on = p == phase
+    bg = PHASE_COLORS[p] if on else "transparent"
+    fg = "#fff" if on else "#9aa0a6"
+    border = PHASE_COLORS[p] if on else "#d0d0d0"
+    ind = spec["indicator"]
+    col.markdown(
+        f"<div style='border:2px solid {border};background:{bg};color:{fg};"
+        f"border-radius:10px;padding:10px 12px;min-height:118px'>"
+        f"<div style='font-weight:800;font-size:17px;margin-bottom:6px'>{p}"
+        f"<span style='float:right;font-weight:600;font-size:13px'>{match_scores.get(p, 0)}%</span></div>"
+        f"<div style='font-size:12px;line-height:1.7'>"
+        f"선행: {ind['선행']}<br>동행: {ind['동행']}<br>후행: {ind['후행']}</div>"
+        f"<div style='font-size:12px;margin-top:6px;font-weight:600'>{spec['risk']}</div>"
+        f"</div>", unsafe_allow_html=True)
+st.caption("각 카드 우측 % = 현재 지표들이 그 국면의 기대 패턴과 얼마나 맞는지(패턴 일치도).")
+
+# ── 현재 지표 방향 (5종 라벨) ────────────────────────────────
+if group_dirs:
+    st.write("")
+    dcols = st.columns([1, 3])
+    dcols[0].markdown("**현재 지표 방향**")
+    chips = "".join(
+        f"<span style='background:#eef2f7;border-radius:14px;padding:4px 12px;"
+        f"margin-right:8px;font-size:14px'>{g}: <b>{d}</b> {DIRECTION_ARROW[d]}</span>"
+        for g, d in group_dirs.items())
+    dcols[1].markdown(chips, unsafe_allow_html=True)
 
 with st.expander("ℹ️ 판정 신뢰도 구성 보기"):
     st.caption(
@@ -201,6 +236,45 @@ left.plotly_chart(phase_clock(result, n=24), width="stretch")
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
 right.plotly_chart(composite_chart(composites, df), width="stretch")
 
+def match_donut(scores, top):
+    labels = PHASE_ORDER
+    fig = go.Figure(go.Pie(
+        labels=labels, values=[scores.get(p, 0) for p in labels], hole=0.58,
+        marker=dict(colors=[PHASE_COLORS[p] for p in labels],
+                    line=dict(color="#fff", width=2)),
+        sort=False, direction="clockwise", textinfo="none",
+        hovertemplate="%{label} 일치도 %{value}%<extra></extra>"))
+    fig.add_annotation(text=f"<b>{top}</b><br><span style='font-size:15px'>"
+                            f"{scores.get(top, 0)}%</span>",
+                       showarrow=False, font=dict(size=22, color=PHASE_COLORS[top]))
+    fig.update_layout(height=300, showlegend=False, margin=dict(l=5, r=5, t=5, b=5))
+    return fig
+
+
+def match_bar(scores):
+    order = sorted(PHASE_ORDER, key=lambda p: scores.get(p, 0))
+    fig = go.Figure(go.Bar(
+        x=[scores.get(p, 0) for p in order], y=order, orientation="h",
+        marker=dict(color=[PHASE_COLORS[p] for p in order]),
+        text=[f"{scores.get(p, 0)}%" for p in order], textposition="outside",
+        hovertemplate="%{y} %{x}%<extra></extra>"))
+    fig.update_layout(height=300, margin=dict(l=5, r=40, t=5, b=5),
+                      xaxis_title="일치 비율(%)", xaxis_range=[0, 105])
+    return fig
+
+
+top_match = max(match_scores, key=match_scores.get)
+st.subheader("🎯 국면별 패턴 일치도")
+m1, m2 = st.columns([1, 1.3])
+m1.plotly_chart(match_donut(match_scores, top_match), width="stretch")
+m2.plotly_chart(match_bar(match_scores), width="stretch")
+if top_match != phase:
+    st.info(f"패턴 최고점은 **{top_match}**({match_scores[top_match]}%)이나, "
+            f"확정 국면은 **{phase}** — 확정 판정은 3개월 연속 지속을 요구하므로 "
+            "패턴이 먼저 움직입니다(전환 조짐).")
+else:
+    st.caption(f"패턴 최고점과 확정 국면이 **{phase}**로 일치 — 판정이 안정적입니다.")
+
 st.subheader("🗓️ 국면 히스토리")
 span = st.radio("히스토리 기간", ["최근 12년", "2000년~", "전체(1975~)"],
                 horizontal=True, label_visibility="collapsed")
@@ -253,6 +327,7 @@ st.subheader("📋 지표별 상세")
 tab_sum, tab_chart, tab_table = st.tabs(["현재 요약", "월별 차트", "월별 표"])
 
 with tab_sum:
+    dir_by_name = {n: d for _g, n, d in ind_dirs}
     rows = []
     for ind in INDICATORS:
         if ind.key not in comps.columns:
@@ -260,12 +335,18 @@ with tab_sum:
         z = comps[ind.key].dropna()
         if z.empty:
             continue
-        mom = momentum(comps[ind.key]).iloc[-1]
-        arrow = "▲ 상승" if mom > 0 else ("▼ 하락" if mom < 0 else "— 보합")
+        d = dir_by_name.get(ind.name_ko)
         rows.append({"그룹": GROUP_KO[ind.group], "지표": ind.name_ko,
-                     "표준화값(z)": round(float(z.iloc[-1]), 2), "방향": arrow,
+                     "표준화값(z)": round(float(z.iloc[-1]), 2),
+                     "방향": f"{d} {DIRECTION_ARROW[d]}" if d else "—",
                      "비고": ind.note})
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    st.caption(
+        "방향 5종 — **상승↑**(모멘텀 (+)) · **반등↗**(하락하다 (+)로 전환) · "
+        "**바닥→**(모멘텀 중립대 & 수준 평균 이하) · **전환↷**(상승하다 (−)로 전환) · "
+        "**하락↓**(모멘텀 (−)). 일치도 채점은 상승 +1 / 반등 +0.5 / 바닥 0 / "
+        "전환 −0.5 / 하락 −1 척도의 거리로 부분점수를 준다."
+    )
 
 with tab_chart:
     opts = [ind for ind in INDICATORS
