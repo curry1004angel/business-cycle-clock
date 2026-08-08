@@ -154,25 +154,50 @@ with st.expander("ℹ️ 판정 신뢰도 구성 보기"):
 # ─────────────────────────────────────────────────────────────
 def phase_clock(res, n=12):
     d = res.dropna(subset=["lead_mom", "lag_mom"]).tail(n)
-    m = max(d["lead_mom"].abs().max(), d["lag_mom"].abs().max(), 0.3) * 1.25
+    # 축을 각자 스케일링한다. 후행 모멘텀 폭은 선행의 1/4 수준이라
+    # 공통 범위를 쓰면 세로가 화면의 20%로 눌려 점·선이 겹친다.
+    def half(s):
+        return max(s.abs().max() * 1.30, 0.08)
+    mx, my = half(d["lead_mom"]), half(d["lag_mom"])
+
     fig = go.Figure()
-    for name, x, y in [("성장", m / 2, m / 2), ("회복", m / 2, -m / 2),
-                       ("둔화", -m / 2, m / 2), ("침체", -m / 2, -m / 2)]:
-        fig.add_annotation(x=x, y=y, text=name, showarrow=False, opacity=0.45,
-                           font=dict(size=20, color=PHASE_COLORS[name]))
+    for name, sx, sy in [("성장", 1, 1), ("회복", 1, -1), ("둔화", -1, 1), ("침체", -1, -1)]:
+        fig.add_annotation(x=sx * mx * 0.62, y=sy * my * 0.78, text=name, showarrow=False,
+                           opacity=0.30, font=dict(size=26, color=PHASE_COLORS[name]))
     fig.add_hline(y=0, line_color="#bbb")
     fig.add_vline(x=0, line_color="#bbb")
-    fig.add_trace(go.Scatter(x=d["lead_mom"], y=d["lag_mom"], mode="lines+markers",
-                             line=dict(color="#ccc"), marker=dict(size=6),
-                             text=[t.strftime("%Y-%m") for t in d.index], name="궤적"))
+
+    labels = [t.strftime("%y-%m") for t in d.index]
+    # 궤적: 오래된 점일수록 흐리고 작게 → 최근 경로가 눈에 들어옴
+    steps = len(d)
+    fig.add_trace(go.Scatter(
+        x=d["lead_mom"], y=d["lag_mom"], mode="lines",
+        line=dict(color="#b9c2cc", width=1.5), hoverinfo="skip", showlegend=False))
+    fig.add_trace(go.Scatter(
+        x=d["lead_mom"], y=d["lag_mom"], mode="markers+text",
+        marker=dict(size=[6 + 6 * i / max(steps - 1, 1) for i in range(steps)],
+                    color=[PHASE_COLORS.get(p, "#999") for p in d["phase"]],
+                    opacity=[0.30 + 0.55 * i / max(steps - 1, 1) for i in range(steps)],
+                    line=dict(width=1, color="#fff")),
+        text=[lab if (i % 3 == 0 or i == steps - 1) else "" for i, lab in enumerate(labels)],
+        textposition="top center", textfont=dict(size=10, color="#777"),
+        customdata=list(zip(labels, d["phase"])),
+        hovertemplate="%{customdata[0]} · %{customdata[1]}<br>"
+                      "선행 %{x:+.2f} / 후행 %{y:+.2f}<extra></extra>",
+        showlegend=False))
     last = d.iloc[-1]
-    fig.add_trace(go.Scatter(x=[last["lead_mom"]], y=[last["lag_mom"]], mode="markers",
-                             marker=dict(size=20, color=PHASE_COLORS[last["phase"]],
-                                         line=dict(width=2, color="#fff")), name="현재"))
-    fig.update_layout(height=430, showlegend=False, margin=dict(l=10, r=10, t=30, b=10),
-                      xaxis_title="← 선행 모멘텀(둔화/침체)   ·   선행 모멘텀(회복/성장) →",
-                      yaxis_title="← 후행(회복/침체)   ·   후행(성장/둔화) →",
-                      xaxis_range=[-m, m], yaxis_range=[-m, m])
+    fig.add_trace(go.Scatter(
+        x=[last["lead_mom"]], y=[last["lag_mom"]], mode="markers",
+        marker=dict(size=22, color=PHASE_COLORS[last["phase"]], symbol="circle",
+                    line=dict(width=3, color="#fff")),
+        hovertemplate=f"현재 {d.index[-1]:%y-%m} · {last['phase']}<extra></extra>",
+        showlegend=False))
+
+    fig.update_layout(height=430, margin=dict(l=10, r=10, t=30, b=10),
+                      xaxis_title="선행 모멘텀  (− 하락 ← → 상승 +)",
+                      yaxis_title="후행 모멘텀  (− 하락 ← → 상승 +)",
+                      xaxis=dict(range=[-mx, mx], zeroline=False),
+                      yaxis=dict(range=[-my, my], zeroline=False))
     return fig
 
 
@@ -231,8 +256,13 @@ def phase_timeline(res, start=None):
 
 
 left, right = st.columns(2)
-left.subheader("🧭 경기 시계 (최근 24개월)")
-left.plotly_chart(phase_clock(result, n=24), width="stretch")
+left.subheader("🧭 경기 시계")
+clock_n = left.radio("기간", [12, 24, 36], index=1, horizontal=True,
+                     format_func=lambda v: f"최근 {v}개월", label_visibility="collapsed")
+left.plotly_chart(phase_clock(result, n=clock_n), width="stretch")
+left.caption("점이 클수록·진할수록 최근. 라벨은 3개월 간격 + 최신월. "
+             "두 축은 각자 스케일 — 후행 모멘텀 변동폭이 선행의 1/4 수준이라 "
+             "공통 축을 쓰면 세로가 눌려 겹쳐 보인다.")
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
 right.plotly_chart(composite_chart(composites, df), width="stretch")
 
