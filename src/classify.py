@@ -33,6 +33,28 @@ DEADBAND = 0.10  # 모멘텀 중립대: 이보다 작으면 방향 전환으로 
 HOLD_MAX = 6     # 중립대에서 직전 방향을 유지하는 최대 개월 수(만료)
 CONFIRM = 3      # 국면 전환 확정에 필요한 연속 개월 수
 
+# ─────────────────────────────────────────────────────────────
+# 감도 프리셋 — 모멘텀을 얼마나 평활할지 선택
+#
+# 창을 줄이면 모멘텀 크기가 작아져 중립대에 갇히고 확정 카운터가 리셋되므로,
+# 창마다 중립대·확정개월을 따로 최적화했다(1975~2026 격자 탐색).
+# stats는 그 백테스트 실측값 — 화면에 그대로 노출해 선택 근거로 쓴다.
+# ─────────────────────────────────────────────────────────────
+PRESETS = {
+    "안정형 (6개월 평활)": dict(smooth=6, window=6, deadband=0.10, confirm=3,
+                          stats="전환 67회 · 평균 9.0개월 · NBER 포착 84% · 오경보 15%"),
+    "민감형 (3개월)": dict(smooth=3, window=3, deadband=0.10, confirm=5,
+                       stats="전환 44회 · 평균 13.7개월 · NBER 포착 97% · 오경보 21%"),
+    "전월 대비 (1개월)": dict(smooth=1, window=1, deadband=0.10, confirm=4,
+                         stats="전환 43회 · 평균 14.0개월 · NBER 포착 62% · 오경보 17%"),
+}
+DEFAULT_PRESET = "안정형 (6개월 평활)"
+
+
+def preset(name=None):
+    """프리셋 파라미터. 이름이 없거나 모르면 기본값."""
+    return PRESETS.get(name or DEFAULT_PRESET, PRESETS[DEFAULT_PRESET])
+
 
 def _phase(lead_dir, lag_dir):
     if lead_dir > 0 and lag_dir <= 0:
@@ -44,7 +66,7 @@ def _phase(lead_dir, lag_dir):
     return "침체"
 
 
-def _sign_hold(m, deadband=DEADBAND, hold_max=HOLD_MAX):
+def _sign_hold(m, deadband=DEADBAND, hold_max=HOLD_MAX):  # noqa: D401
     """중립대 안(|m|<deadband)에서는 직전 방향 유지 — 단 hold_max개월까지만.
 
     그 이상 머물면 직전 방향은 낡은 정보이므로 현재 부호(약해도)를 따른다.
@@ -87,24 +109,30 @@ def _hysteresis(raw, confirm=CONFIRM):
     return pd.Series(phase, index=raw.index)
 
 
-def classify(composites):
+def classify(composites, p=None):
     """월별 국면 라벨 + 합성/모멘텀을 담은 DataFrame 반환.
 
     phase     : 확정 국면(중립대+확정규칙 적용) — 화면 표시용
     raw_phase : 매월 원시 사분면 — 참고용
+    p         : 감도 프리셋(preset()) — 없으면 기본값
     """
+    p = p or preset()
     lead = composites.get("leading")
     coin = composites.get("coincident")
     lag = composites.get("lagging")
-    lead_m, coin_m, lag_m = momentum(lead), momentum(coin), momentum(lag)
+    sm, w = p["smooth"], p["window"]
+    lead_m = momentum(lead, sm, w)
+    coin_m = momentum(coin, sm, w)
+    lag_m = momentum(lag, sm, w)
 
-    lead_s, lag_s = _sign_hold(lead_m), _sign_hold(lag_m)
+    lead_s = _sign_hold(lead_m, p["deadband"])
+    lag_s = _sign_hold(lag_m, p["deadband"])
     raw = pd.Series(
         [np.nan if (pd.isna(a) or pd.isna(b)) else _phase(a, b)
          for a, b in zip(lead_s, lag_s)],
         index=composites.index, dtype="object",
     )
-    phase = _hysteresis(raw)
+    phase = _hysteresis(raw, p["confirm"])
 
     return pd.DataFrame({
         "phase": phase, "raw_phase": raw,
@@ -137,15 +165,18 @@ DIRECTION_ARROW = {"상승": "↑", "반등": "↗", "바닥": "→", "전환": 
 TURN_LAG = 3  # 방향 전환 판정에 쓰는 비교 시차(개월)
 
 
-def direction5(series, band=DEADBAND, turn_lag=TURN_LAG):
+def direction5(series, band=None, turn_lag=TURN_LAG, p=None):
     """5종 방향 라벨(상승/반등/바닥/전환/하락).
 
     반등·전환은 모멘텀 부호가 turn_lag개월 전 대비 뒤집혔는지(2차 정보)로,
     바닥은 모멘텀이 중립대 안이면서 수준이 평균 이하인지로 판정한다.
+    p = 감도 프리셋(preset()) — 없으면 기본값.
     """
+    p = p or preset()
+    band = p["deadband"] if band is None else band
     if series is None or series.dropna().empty:
         return None
-    m = momentum(series).dropna()
+    m = momentum(series, p["smooth"], p["window"]).dropna()
     if m.empty:
         return None
     cur = float(m.iloc[-1])
@@ -168,7 +199,7 @@ def _score(actual, expected):
     return 1.0 - abs(DIRECTION_VALUE[actual] - DIRECTION_VALUE[expected]) / 2.0
 
 
-def pattern_match(composites, comps):
+def pattern_match(composites, comps, p=None):
     """국면별 패턴 일치도(%) + 방향 라벨.
 
     반환: (scores, group_dirs, ind_dirs)
@@ -176,18 +207,19 @@ def pattern_match(composites, comps):
       group_dirs : {선행/동행/후행: 방향}  — 화면 상단 요약용
       ind_dirs   : [(그룹, 지표명, 방향)]  — 지표별 상세용
     """
+    p = p or preset()
     # ROTATION["회복"]["indicator"] 의 키에 맞춘 짧은 그룹명
     SHORT = {"leading": "선행", "coincident": "동행", "lagging": "후행"}
 
     group_dirs, ind_dirs = {}, []
     for g, ko in SHORT.items():
         if g in composites:
-            d = direction5(composites[g])
+            d = direction5(composites[g], p=p)
             if d:
                 group_dirs[ko] = d
     for ind in INDICATORS:
         if ind.key in comps.columns:
-            d = direction5(comps[ind.key])
+            d = direction5(comps[ind.key], p=p)
             if d:
                 ind_dirs.append((SHORT[ind.group], ind.name_ko, d))
 

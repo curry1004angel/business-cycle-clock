@@ -14,8 +14,8 @@ from src.composite import build_composites, momentum, _transform
 from plotly.subplots import make_subplots
 
 from src.classify import (classify, confidence_detail, phase_duration,
-                          pattern_match, _phase, DIRECTION_ARROW, DEADBAND,
-                          TURN_LAG, PHASE_EN)
+                          pattern_match, preset, _phase, DIRECTION_ARROW,
+                          PRESETS, DEFAULT_PRESET, TURN_LAG, PHASE_EN)
 from src.indicators import INDICATORS, GROUP_KO, by_key
 from src.rotation import ROTATION, PHASE_COLORS, PHASE_ORDER
 
@@ -58,8 +58,23 @@ if st.sidebar.button("🔄 데이터 새로고침"):
     get_data.clear()
 
 df = get_data()
+
+# ── 감도 프리셋 선택 ─────────────────────────────────────────
+st.sidebar.markdown("### ⚙️ 방향 판정 감도")
+preset_name = st.sidebar.radio(
+    "모멘텀 계산 방식", list(PRESETS), index=list(PRESETS).index(DEFAULT_PRESET),
+    label_visibility="collapsed")
+P = preset(preset_name)
+DEADBAND = P["deadband"]
+st.sidebar.caption(
+    f"모멘텀 = z를 {P['smooth']}개월 평활 후 {P['window']}개월 변화량 · "
+    f"중립대 {P['deadband']} · 확정 {P['confirm']}개월 연속\n\n"
+    f"**백테스트(1975~)**: {P['stats']}")
+if preset_name != DEFAULT_PRESET:
+    st.sidebar.warning("기본값이 아닙니다. 아래 화면 전체가 이 설정으로 재계산됩니다.")
+
 composites, comps = build_composites(df)
-result = classify(composites)
+result = classify(composites, P)
 valid = result.dropna(subset=["phase"])
 latest = valid.iloc[-1]
 phase = latest["phase"]
@@ -95,11 +110,12 @@ c4.metric("후행지표 방향", _dir(latest["lag_mom"]), f"{latest['lag_mom']:+
 
 # 원시 사분면이 확정 국면과 다르면 = 전환 후보 관찰 중
 if pd.notna(latest.get("raw_phase")) and latest["raw_phase"] != phase:
-    st.info(f"👀 최근 지표는 **{latest['raw_phase']}** 방향입니다 — 3개월 연속 지속되면 국면이 전환됩니다.")
+    st.info(f"👀 최근 지표는 **{latest['raw_phase']}** 방향입니다 — "
+            f"{P['confirm']}개월 연속 지속되면 국면이 전환됩니다.")
 elif conf < 30:
     st.warning("⚠️ 신뢰도가 낮습니다 — 모멘텀이 약한 경계 구간(전환 가능성)입니다.")
 
-match_scores, group_dirs, ind_dirs = pattern_match(composites, comps)
+match_scores, group_dirs, ind_dirs = pattern_match(composites, comps, P)
 
 # ── 4국면 카드 띠 (현재 국면 강조) ─────────────────────────────
 st.write("")
@@ -271,7 +287,7 @@ clock_n = left.radio("기간", [12, 24, 36], index=1, horizontal=True,
 left.plotly_chart(phase_clock(result, n=clock_n), width="stretch")
 left.caption(
     "점이 클수록·진할수록 최근. 색 = 점이 위치한 사분면. "
-    "**검은 테두리** = 지표는 새 사분면으로 넘어갔지만 3개월 연속 확정을 "
+    f"**검은 테두리** = 지표는 새 사분면으로 넘어갔지만 {P['confirm']}개월 연속 확정을 "
     "기다리는 달(전환 대기) — 호버하면 위치와 확정 국면을 함께 보여준다. "
     "두 축은 각자 스케일(후행 변동폭이 선행의 1/4이라 공통 축이면 세로가 눌림)."
 )
@@ -430,13 +446,15 @@ with tab_sum:
         st.markdown(
             "**읽는 법** — `z = 0` 평균 수준 · `+1` 역사적 상위권 · `−1` 하위권. "
             "그룹(선행/동행/후행) 합성지수는 해당 지표들의 z를 **단순평균**한 값이고, "
-            "국면 판정에 쓰는 모멘텀은 그 합성지수를 6개월 평활한 뒤 6개월 변화량이다."
+            f"국면 판정에 쓰는 모멘텀은 그 합성지수를 {P['smooth']}개월 평활한 뒤 "
+            f"{P['window']}개월 변화량이다."
         )
     with st.expander("🧭 방향(5종)은 어떻게 정하나"):
         st.markdown(
             f"각 지표의 z 시계열에서 **모멘텀**을 구한 뒤, 그 부호와 전환 여부로 판정한다.\n\n"
-            f"모멘텀 = z를 6개월 평활한 뒤 6개월 변화량 "
-            f"(`z.rolling(6).mean().diff(6)`)"
+            f"모멘텀 = z를 {P['smooth']}개월 평활한 뒤 {P['window']}개월 변화량 "
+            f"(`z.rolling({P['smooth']}).mean().diff({P['window']})`) — "
+            f"사이드바의 **방향 판정 감도**로 바꿀 수 있다."
         )
         st.markdown("**판정 순서** (위에서부터 먼저 맞는 규칙 채택)")
         st.dataframe(pd.DataFrame([
@@ -460,7 +478,7 @@ with tab_sum:
             if ind.key not in comps.columns:
                 continue
             s = comps[ind.key]
-            m = momentum(s).dropna()
+            m = momentum(s, P["smooth"], P["window"]).dropna()
             if m.empty:
                 continue
             cur = float(m.iloc[-1])
