@@ -60,9 +60,17 @@ streamlit run app.py
    [auth]
    password = "원하는_비밀번호"
    ```
-4. **자동 데이터 갱신**: `.github/workflows/update-data.yml` 가 매월 3일 데이터를
-   수집해 `data/series.parquet` 를 레포에 커밋 → 앱이 자동 재배포된다.
+4. **자동 데이터 갱신**: `.github/workflows/update-data.yml` 가 **매월 3·6·18일**
+   데이터를 수집해 `data/series.parquet` 를 레포에 커밋 → 앱이 자동 재배포된다.
    (Settings → Actions → "Read and write permissions" 활성화 필요)
+
+   | 크론 | 노리는 발표 |
+   |---|---|
+   | 3일 | ISM PMI(1영업일), 고용보고서(첫 금요일) |
+   | 6일 | 위 발표가 늦는 달 대비 재시도 |
+   | 18일 | 산업생산·설비가동률·소매판매(중순 발표) |
+
+   지표마다 발표 시차가 달라 최신월이 다른 것은 정상이다(무역은 약 2개월 지연).
 
 ## 구조
 

@@ -377,11 +377,18 @@ with tab_sum:
         if z.empty:
             continue
         d = dir_by_name.get(ind.name_ko)
+        raw_last = df[ind.key].dropna()
         rows.append({"그룹": GROUP_KO[ind.group], "지표": ind.name_ko,
+                     "최신월": raw_last.index[-1].strftime("%Y-%m") if len(raw_last) else "—",
                      "표준화값(z)": round(float(z.iloc[-1]), 2),
                      "방향": f"{d} {DIRECTION_ARROW[d]}" if d else "—",
                      "비고": ind.note})
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    st.caption(
+        "**최신월**은 지표마다 다르다 — 발표 일정이 다르기 때문이다. "
+        "고용·서베이·PMI는 익월 초, 산업생산·설비가동률·소매판매는 익월 중순, "
+        "무역(수출)은 약 2개월 지연. 데이터 수집은 매월 3·6·18일 자동 실행된다."
+    )
     st.caption(
         "방향 5종 — **상승↑**(모멘텀 (+)) · **반등↗**(하락하다 (+)로 전환) · "
         "**바닥→**(모멘텀 중립대 & 수준 평균 이하) · **전환↷**(상승하다 (−)로 전환) · "
