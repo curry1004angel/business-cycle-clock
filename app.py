@@ -14,7 +14,7 @@ from src.composite import build_composites, momentum
 from plotly.subplots import make_subplots
 
 from src.classify import (classify, confidence_detail, phase_duration,
-                          pattern_match, DIRECTION_ARROW, PHASE_EN)
+                          pattern_match, _phase, DIRECTION_ARROW, PHASE_EN)
 from src.indicators import INDICATORS, GROUP_KO, by_key
 from src.rotation import ROTATION, PHASE_COLORS, PHASE_ORDER
 
@@ -168,29 +168,37 @@ def phase_clock(res, n=12):
     fig.add_vline(x=0, line_color="#bbb")
 
     labels = [t.strftime("%y-%m") for t in d.index]
-    # 궤적: 오래된 점일수록 흐리고 작게 → 최근 경로가 눈에 들어옴
     steps = len(d)
+    # 점 색은 '점이 실제 찍힌 사분면'으로 정한다. 확정 국면이나 원시 국면으로
+    # 칠하면 확정규칙 대기·중립대 유지 구간에서 색과 위치가 어긋나 보인다.
+    quad = [_phase(1 if x > 0 else -1, 1 if y > 0 else -1)
+            for x, y in zip(d["lead_mom"], d["lag_mom"])]
+    pending = [q != p for q, p in zip(quad, d["phase"])]  # 확정과 다름 = 테두리
+
+    # 궤적: 오래된 점일수록 흐리고 작게 → 최근 경로가 눈에 들어옴
     fig.add_trace(go.Scatter(
         x=d["lead_mom"], y=d["lag_mom"], mode="lines",
         line=dict(color="#b9c2cc", width=1.5), hoverinfo="skip", showlegend=False))
     fig.add_trace(go.Scatter(
         x=d["lead_mom"], y=d["lag_mom"], mode="markers+text",
         marker=dict(size=[6 + 6 * i / max(steps - 1, 1) for i in range(steps)],
-                    color=[PHASE_COLORS.get(p, "#999") for p in d["phase"]],
+                    color=[PHASE_COLORS.get(p, "#999") for p in quad],
                     opacity=[0.30 + 0.55 * i / max(steps - 1, 1) for i in range(steps)],
-                    line=dict(width=1, color="#fff")),
+                    line=dict(width=[2.5 if p else 1 for p in pending],
+                              color=["#444" if p else "#fff" for p in pending])),
         text=[lab if (i % 3 == 0 or i == steps - 1) else "" for i, lab in enumerate(labels)],
         textposition="top center", textfont=dict(size=10, color="#777"),
-        customdata=list(zip(labels, d["phase"])),
-        hovertemplate="%{customdata[0]} · %{customdata[1]}<br>"
-                      "선행 %{x:+.2f} / 후행 %{y:+.2f}<extra></extra>",
+        customdata=list(zip(labels, quad, d["phase"])),
+        hovertemplate="%{customdata[0]}<br>위치: %{customdata[1]} · 확정: %{customdata[2]}"
+                      "<br>선행 %{x:+.2f} / 후행 %{y:+.2f}<extra></extra>",
         showlegend=False))
     last = d.iloc[-1]
     fig.add_trace(go.Scatter(
         x=[last["lead_mom"]], y=[last["lag_mom"]], mode="markers",
-        marker=dict(size=22, color=PHASE_COLORS[last["phase"]], symbol="circle",
-                    line=dict(width=3, color="#fff")),
-        hovertemplate=f"현재 {d.index[-1]:%y-%m} · {last['phase']}<extra></extra>",
+        marker=dict(size=22, color=PHASE_COLORS[quad[-1]], symbol="circle",
+                    line=dict(width=3, color="#fff" if not pending[-1] else "#444")),
+        hovertemplate=f"현재 {d.index[-1]:%y-%m} · 위치 {quad[-1]} "
+                      f"· 확정 {last['phase']}<extra></extra>",
         showlegend=False))
 
     fig.update_layout(height=430, margin=dict(l=10, r=10, t=30, b=10),
@@ -260,9 +268,12 @@ left.subheader("🧭 경기 시계")
 clock_n = left.radio("기간", [12, 24, 36], index=1, horizontal=True,
                      format_func=lambda v: f"최근 {v}개월", label_visibility="collapsed")
 left.plotly_chart(phase_clock(result, n=clock_n), width="stretch")
-left.caption("점이 클수록·진할수록 최근. 라벨은 3개월 간격 + 최신월. "
-             "두 축은 각자 스케일 — 후행 모멘텀 변동폭이 선행의 1/4 수준이라 "
-             "공통 축을 쓰면 세로가 눌려 겹쳐 보인다.")
+left.caption(
+    "점이 클수록·진할수록 최근. 색 = 점이 위치한 사분면. "
+    "**검은 테두리** = 지표는 새 사분면으로 넘어갔지만 3개월 연속 확정을 "
+    "기다리는 달(전환 대기) — 호버하면 위치와 확정 국면을 함께 보여준다. "
+    "두 축은 각자 스케일(후행 변동폭이 선행의 1/4이라 공통 축이면 세로가 눌림)."
+)
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
 right.plotly_chart(composite_chart(composites, df), width="stretch")
 
