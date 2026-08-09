@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.fetch import load, upsert_manual_pmi, MANUAL_PMI
-from src.composite import build_composites, momentum
+from src.composite import build_composites, momentum, _transform
 from plotly.subplots import make_subplots
 
 from src.classify import (classify, confidence_detail, phase_duration,
@@ -389,6 +389,48 @@ with tab_sum:
         "고용·서베이·PMI는 익월 초, 산업생산·설비가동률·소매판매는 익월 중순, "
         "무역(수출)은 약 2개월 지연. 데이터 수집은 매월 3·6·18일 자동 실행된다."
     )
+
+    with st.expander("📐 표준화값(z)은 어떻게 구하나"):
+        st.markdown(
+            "단위가 제각각인 지표(지수·%·시간·달러)를 더하려면 공통 척도가 필요하다. "
+            "**z-score**는 각 지표를 '자기 역사 대비 몇 표준편차 떨어져 있나'로 바꾼다."
+        )
+        st.markdown("**1단계 — 변환**")
+        st.markdown(
+            "- `YoY` 지표(주가·산업생산·소매판매·수출·GDP·임금): 전년동월비 %로 변환\n"
+            "- `원값` 지표(심리·금리차·PMI·가동률·실업률·노동시간): 값 그대로\n"
+            "- **실업률만 부호를 뒤집는다** — 낮을수록 경기가 좋아 다른 지표와 방향을 맞춤"
+        )
+        st.markdown("**2단계 — 표준화**")
+        st.latex(r"z = \frac{x - \mu}{\sigma}")
+        st.markdown(
+            f"μ·σ는 **전체 표본({df.index[0]:%Y}~{df.index[-1]:%Y}, {len(df)}개월) 기준**이다. "
+            "따라서 z는 51년 역사와 비교한 위치다. "
+            "표본이 12개월 미만인 지표는 μ·σ가 왜곡되어 합성에서 제외한다."
+        )
+        st.markdown("**실제 계산 예시 (현재 값)**")
+        ex = []
+        for k in ("indpro", "unemploy", "pmi_manual"):
+            if k not in comps.columns or k not in df.columns:
+                continue
+            ind = by_key()[k]
+            raw_s = df[k].dropna()
+            v = _transform(df[k], ind.transform, ind.invert)
+            t = raw_s.index[-1]
+            ex.append({
+                "지표": ind.name_ko,
+                "원값": f"{raw_s.iloc[-1]:.2f}",
+                "변환": ("전년비 %" if ind.transform == "yoy" else "원값")
+                        + (" · 부호반전" if ind.invert else ""),
+                "x": f"{v[t]:+.2f}", "μ": f"{v.mean():+.2f}", "σ": f"{v.std(ddof=0):.2f}",
+                "z": f"{comps[k][t]:+.2f}",
+            })
+        st.dataframe(pd.DataFrame(ex), width="stretch", hide_index=True)
+        st.markdown(
+            "**읽는 법** — `z = 0` 평균 수준 · `+1` 역사적 상위권 · `−1` 하위권. "
+            "그룹(선행/동행/후행) 합성지수는 해당 지표들의 z를 **단순평균**한 값이고, "
+            "국면 판정에 쓰는 모멘텀은 그 합성지수를 6개월 평활한 뒤 6개월 변화량이다."
+        )
     st.caption(
         "방향 5종 — **상승↑**(모멘텀 (+)) · **반등↗**(하락하다 (+)로 전환) · "
         "**바닥→**(모멘텀 중립대 & 수준 평균 이하) · **전환↷**(상승하다 (−)로 전환) · "
