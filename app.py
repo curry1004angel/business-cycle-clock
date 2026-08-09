@@ -14,7 +14,8 @@ from src.composite import build_composites, momentum, _transform
 from plotly.subplots import make_subplots
 
 from src.classify import (classify, confidence_detail, phase_duration,
-                          pattern_match, _phase, DIRECTION_ARROW, PHASE_EN)
+                          pattern_match, _phase, DIRECTION_ARROW, DEADBAND,
+                          TURN_LAG, PHASE_EN)
 from src.indicators import INDICATORS, GROUP_KO, by_key
 from src.rotation import ROTATION, PHASE_COLORS, PHASE_ORDER
 
@@ -431,12 +432,61 @@ with tab_sum:
             "그룹(선행/동행/후행) 합성지수는 해당 지표들의 z를 **단순평균**한 값이고, "
             "국면 판정에 쓰는 모멘텀은 그 합성지수를 6개월 평활한 뒤 6개월 변화량이다."
         )
-    st.caption(
-        "방향 5종 — **상승↑**(모멘텀 (+)) · **반등↗**(하락하다 (+)로 전환) · "
-        "**바닥→**(모멘텀 중립대 & 수준 평균 이하) · **전환↷**(상승하다 (−)로 전환) · "
-        "**하락↓**(모멘텀 (−)). 일치도 채점은 상승 +1 / 반등 +0.5 / 바닥 0 / "
-        "전환 −0.5 / 하락 −1 척도의 거리로 부분점수를 준다."
-    )
+    with st.expander("🧭 방향(5종)은 어떻게 정하나"):
+        st.markdown(
+            f"각 지표의 z 시계열에서 **모멘텀**을 구한 뒤, 그 부호와 전환 여부로 판정한다.\n\n"
+            f"모멘텀 = z를 6개월 평활한 뒤 6개월 변화량 "
+            f"(`z.rolling(6).mean().diff(6)`)"
+        )
+        st.markdown("**판정 순서** (위에서부터 먼저 맞는 규칙 채택)")
+        st.dataframe(pd.DataFrame([
+            {"순서": 1, "방향": "반등 ↗", "조건": f"모멘텀 > 0 이고 {TURN_LAG}개월 전 ≤ 0",
+             "의미": "하락하다 (+)로 돌아섬"},
+            {"순서": 2, "방향": "전환 ↷", "조건": f"모멘텀 < 0 이고 {TURN_LAG}개월 전 ≥ 0",
+             "의미": "상승하다 (−)로 꺾임"},
+            {"순서": 3, "방향": "바닥 →", "조건": f"|모멘텀| ≤ {DEADBAND} 이고 z ≤ 0",
+             "의미": "저점에서 횡보"},
+            {"순서": 4, "방향": "상승 ↑", "조건": "모멘텀 > 0", "의미": "추세 상승"},
+            {"순서": 5, "방향": "하락 ↓", "조건": "모멘텀 < 0", "의미": "추세 하락"},
+        ]), width="stretch", hide_index=True)
+        st.markdown(
+            "전환점(반등·전환)을 먼저 보는 이유 — 부호만 보면 방금 돌아선 것과 "
+            "쭉 오르던 것이 똑같이 '상승'이 되어 국면 전환을 놓친다."
+        )
+
+        st.markdown("**현재 지표별 판정 근거**")
+        trace = []
+        for ind in INDICATORS:
+            if ind.key not in comps.columns:
+                continue
+            s = comps[ind.key]
+            m = momentum(s).dropna()
+            if m.empty:
+                continue
+            cur = float(m.iloc[-1])
+            prev = float(m.iloc[-1 - TURN_LAG]) if len(m) > TURN_LAG else float("nan")
+            lvl = float(s.dropna().iloc[-1])
+            d = dir_by_name.get(ind.name_ko)
+            if pd.notna(prev) and cur > 0 and prev <= 0:
+                why = "① 모멘텀 (−)→(+)"
+            elif pd.notna(prev) and cur < 0 and prev >= 0:
+                why = "② 모멘텀 (+)→(−)"
+            elif abs(cur) <= DEADBAND and lvl <= 0:
+                why = f"③ |모멘텀| ≤ {DEADBAND} & z ≤ 0"
+            else:
+                why = f"{'④' if cur > 0 else '⑤'} 모멘텀 {'(+)' if cur > 0 else '(−)'}"
+            trace.append({"지표": ind.name_ko, "모멘텀": f"{cur:+.2f}",
+                          f"{TURN_LAG}개월 전": f"{prev:+.2f}" if pd.notna(prev) else "—",
+                          "z": f"{lvl:+.2f}",
+                          "방향": f"{d} {DIRECTION_ARROW[d]}" if d else "—",
+                          "적용 규칙": why})
+        st.dataframe(pd.DataFrame(trace), width="stretch", hide_index=True)
+        st.markdown(
+            "**국면 일치도 채점** — 방향을 `상승 +1 / 반등 +0.5 / 바닥 0 / 전환 −0.5 / "
+            "하락 −1`로 수치화하고, 국면별 기대 패턴과의 거리로 부분점수를 준다"
+            "(거리 0 = 1.0점, 최대 거리 2.0 = 0점). 문자열로 비교하면 '반등'과 '상승'이 "
+            "0점이 되어 일치도가 항상 낮게 나온다."
+        )
 
 with tab_chart:
     opts = [ind for ind in INDICATORS
