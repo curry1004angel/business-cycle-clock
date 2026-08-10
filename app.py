@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 from src.classify import (classify, confidence_detail, phase_duration,
                           pattern_match, preset, _phase, DIRECTION_ARROW,
                           PRESETS, DEFAULT_PRESET, TURN_LAG, PHASE_EN)
-from src.indicators import INDICATORS, GROUP_KO, by_key
+from src.indicators import INDICATORS, GROUP_KO, by_key, groups
 from src.rotation import ROTATION, PHASE_COLORS, PHASE_ORDER
 
 st.set_page_config(page_title="경기 국면 판단", page_icon="📊", layout="wide")
@@ -226,9 +226,9 @@ def phase_clock(res, n=12):
     return fig
 
 
-def composite_chart(comp, df, years=12):
-    start = comp.index.max() - pd.DateOffset(years=years)
-    c = comp[comp.index >= start]
+def composite_chart(comp, df, start=None):
+    c = comp if start is None else comp[comp.index >= start]
+    start = c.index.min()
     fig = go.Figure()
     # NBER 침체 음영
     if "nber_rec" in df.columns:
@@ -292,7 +292,17 @@ left.caption(
     "두 축은 각자 스케일(후행 변동폭이 선행의 1/4이라 공통 축이면 세로가 눌림)."
 )
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
-right.plotly_chart(composite_chart(composites, df), width="stretch")
+COMP_SPANS = {"12개월": 12, "24개월": 24, "36개월": 36, "12년": 144, "전체": None}
+comp_span = right.radio("기간", list(COMP_SPANS), index=3, horizontal=True,
+                        label_visibility="collapsed")
+n_months = COMP_SPANS[comp_span]
+comp_start = (None if n_months is None
+              else composites.index.max() - pd.DateOffset(months=n_months - 1))
+right.plotly_chart(composite_chart(composites, df, comp_start), width="stretch")
+right.caption(
+    "선행/동행/후행 각 그룹의 지표 z-score를 **단순평균**한 값. "
+    "0 = 역사적 평균 수준. 아래 '합성지수는 어떻게 만드나'에서 구성 지표와 기여도 확인."
+)
 
 def match_donut(scores, top):
     labels = PHASE_ORDER
@@ -332,6 +342,42 @@ if top_match != phase:
             "패턴이 먼저 움직입니다(전환 조짐).")
 else:
     st.caption(f"패턴 최고점과 확정 국면이 **{phase}**로 일치 — 판정이 안정적입니다.")
+
+with st.expander("🧮 합성지수는 어떻게 만드나"):
+    st.markdown(
+        "그룹 합성지수 = **그 그룹 지표들의 z-score 단순평균**. 가중치는 두지 않는다 "
+        "(가중치를 과거 성과에 맞춰 고르면 과최적화되고, 지표가 빠진 기간에 "
+        "합성값이 튄다). 결측 지표는 자동으로 평균에서 빠진다 — 예컨대 "
+        "소매판매·수출은 1992년부터, 엠파이어스테이트는 2001년부터라 "
+        "그 이전 구간은 남은 지표만으로 평균한다."
+    )
+    st.latex(r"\text{합성}_{\text{그룹}}(t) = \frac{1}{n_t}\sum_{i \in \text{그룹}} z_i(t)")
+
+    st.markdown("**최신 구성과 기여도**")
+    contrib = []
+    for g, ko in (("leading", "선행"), ("coincident", "동행"), ("lagging", "후행")):
+        keys = [k for k in groups()[g] if k in comps.columns]
+        if not keys or g not in composites:
+            continue
+        # 그룹마다 발표 시차가 달라 최신월이 다르다 → 그룹별 마지막 유효월 사용
+        gt = composites[g].last_valid_index()
+        if gt is None:
+            continue
+        row = comps.loc[gt, keys].dropna()
+        for k in row.index:
+            contrib.append({"그룹": ko, "기준월": gt.strftime("%Y-%m"),
+                            "지표": by_key()[k].name_ko, "z": round(float(row[k]), 2),
+                            "합성 기여(1/n)": f"{row[k] / len(row):+.3f}"})
+        contrib.append({"그룹": ko, "기준월": gt.strftime("%Y-%m"),
+                        "지표": f"→ {ko} 합성지수 ({len(row)}개 평균)",
+                        "z": round(float(composites[g].loc[gt]), 2), "합성 기여(1/n)": ""})
+    st.dataframe(pd.DataFrame(contrib), width="stretch", hide_index=True)
+    st.caption(
+        "**기준월이 그룹마다 다를 수 있다** — 지표 발표 시차 때문이며, 그룹의 마지막 "
+        "유효월을 쓴다. 지표 수가 달라(선행 6 · 동행 4 · 후행 4) 개별 기여도는 1/n로 "
+        "나뉜다. 국면 판정은 이 합성지수의 **모멘텀**(방향)으로 하며 수준 자체로는 "
+        "하지 않는다."
+    )
 
 st.subheader("🗓️ 국면 히스토리")
 span = st.radio("히스토리 기간", ["최근 12년", "2000년~", "전체(1975~)"],
