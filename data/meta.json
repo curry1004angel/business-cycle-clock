@@ -1,13 +1,11 @@
 {
-  "updated_at": "2026-08-08T16:39:07+00:00",
-  "rows": 811,
+  "updated_at": "2026-08-10T12:53:13+00:00",
+  "rows": 619,
   "last_month": "2026-07-31",
   "columns": [
     "sp500",
     "sentiment",
     "yield_spread",
-    "philly_fed",
-    "empire_state",
     "pmi_manual",
     "indpro",
     "retail",

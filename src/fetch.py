@@ -72,6 +72,10 @@ def fetch_all(start="1975-01-01"):
 
     df = pd.DataFrame(frames)
     df = df.resample("ME").mean()
+    # 수동 PMI CSV는 1959년부터라 다른 지표(1975~)보다 앞선다. 그대로 두면
+    # 선행 합성만 홀로 존재하는 1959~1974 구간이 생기고, z-score 표본 기간도
+    # 지표마다 달라진다 → 공통 시작 이후로 자른다.
+    df = df[df.index >= pd.Timestamp(start)]
     # 내부 결측(분기 GDP, 옛 분기 심리지수 등)은 직전값으로 채우되,
     # 각 지표의 마지막 실제 관측 이후(=아직 미발표 달)는 채우지 않는다.
     # 안 그러면 발표가 늦는 지표의 최신월이 이전 값 복제로 조작됨
@@ -104,7 +108,7 @@ def load():
         try:
             s = _manual_pmi().resample("ME").mean()
             df = df.drop(columns=["pmi_manual"], errors="ignore")
-            df = df.join(s.rename("pmi_manual"), how="left")
+            df = df.join(s.rename("pmi_manual"), how="left")  # 캐시 기간에 맞춰 붙임
         except Exception:
             pass  # 수동 PMI 없으면 그대로
         return df

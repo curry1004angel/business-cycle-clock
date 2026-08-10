@@ -42,11 +42,11 @@ CONFIRM = 3      # 국면 전환 확정에 필요한 연속 개월 수
 # ─────────────────────────────────────────────────────────────
 PRESETS = {
     "안정형 (6개월 평활)": dict(smooth=6, window=6, deadband=0.10, confirm=3,
-                          stats="전환 67회 · 평균 9.0개월 · NBER 포착 84% · 오경보 15%"),
+                          stats="전환 63회 · 평균 9.6개월 · NBER 포착 86% · 오경보 16%"),
     "민감형 (3개월)": dict(smooth=3, window=3, deadband=0.10, confirm=5,
-                       stats="전환 44회 · 평균 13.7개월 · NBER 포착 97% · 오경보 21%"),
-    "전월 대비 (1개월)": dict(smooth=1, window=1, deadband=0.10, confirm=4,
-                         stats="전환 43회 · 평균 14.0개월 · NBER 포착 62% · 오경보 17%"),
+                       stats="전환 44회 · 평균 13.7개월 · NBER 포착 98% · 오경보 18%"),
+    "전월 대비 (1개월)": dict(smooth=1, window=1, deadband=0.08, confirm=3,
+                         stats="전환 67회 · 평균 9.1개월 · NBER 포착 60% · 오경보 10%"),
 }
 DEFAULT_PRESET = "안정형 (6개월 평활)"
 

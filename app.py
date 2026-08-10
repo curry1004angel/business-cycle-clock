@@ -227,7 +227,11 @@ def phase_clock(res, n=12):
 
 
 def composite_chart(comp, df, start=None):
-    c = comp if start is None else comp[comp.index >= start]
+    # 세 그룹이 모두 값을 갖는 구간만 그린다. 한 그룹만 존재하는 앞쪽 구간을
+    # 남기면 '전체' 보기에서 동행·후행 선이 끊긴 채 시작한다.
+    full = comp[["leading", "coincident", "lagging"]].dropna(how="any")
+    lo = full.index.min() if len(full) else comp.index.min()
+    c = comp[comp.index >= max(lo, start)] if start is not None else comp[comp.index >= lo]
     start = c.index.min()
     fig = go.Figure()
     # NBER 침체 음영
@@ -292,8 +296,8 @@ left.caption(
     "두 축은 각자 스케일(후행 변동폭이 선행의 1/4이라 공통 축이면 세로가 눌림)."
 )
 right.subheader("📈 합성지수 추이 (회색=NBER 침체)")
-COMP_SPANS = {"12개월": 12, "24개월": 24, "36개월": 36, "12년": 144, "전체": None}
-comp_span = right.radio("기간", list(COMP_SPANS), index=3, horizontal=True,
+COMP_SPANS = {"12개월": 12, "36개월": 36, "60개월": 60, "120개월": 120, "전체": None}
+comp_span = right.radio("기간", list(COMP_SPANS), index=2, horizontal=True,
                         label_visibility="collapsed")
 n_months = COMP_SPANS[comp_span]
 comp_start = (None if n_months is None

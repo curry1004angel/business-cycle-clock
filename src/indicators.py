@@ -9,14 +9,12 @@
 - invert    : 경기와 반대로 움직이는 지표(실업률 등)는 True
 
 ※ PMI 관련 메모
-  ISM/S&P Global PMI는 무료로 "장기 + 최신 + 자동"을 동시에 주는 소스가 없다.
-  그래서 제조업 선행신호는 FRED에서 자동 수집되는 '지역 연준 서베이'
-  (필라델피아 연준 + 엠파이어스테이트)로 대신한다. 둘 다 ISM보다 ~2주 먼저
-  발표되어 선행성이 더 빠르다.
-  실제 ISM/S&P PMI 헤드라인을 보고 싶으면 data/pmi_manual.csv 에 월 1회 입력하면
-  'pmi_manual' 지표로 합성에 함께 반영된다(비워두면 무시).
-  → 2026-07: FRED-MD 2015-07 빈티지(Wayback Machine 보존본)에서 실제 ISM PMI
-    1959-01~2015-06을 확보해 채워둠. 2015-07 이후는 수동 입력으로 보완.
+  제조업 선행신호는 실제 ISM PMI('pmi_manual')를 쓴다. data/pmi_manual.csv에
+  1959-01~현재가 채워져 있고(FRED-MD 2015-07 빈티지 + investing.com 이력),
+  신규 발표분은 scripts/update_pmi.py가 매월 자동 수집한다.
+  ISM을 무료로 못 구하던 시절 대체재로 쓰던 지역 연준 서베이(필라델피아
+  GACDFSA066MSFRBPHI, 엠파이어스테이트 GACDISA066MSFRBNY)는 실제 ISM 확보 후
+  중복이라 제거했다.
 """
 
 from dataclasses import dataclass
@@ -39,9 +37,7 @@ INDICATORS = [
     Indicator("sp500",        "주가(S&P500)",          "leading", "yahoo",  "^GSPC",              "yoy"),
     Indicator("sentiment",    "소비자심리지수",         "leading", "fred",   "UMCSENT",            "level"),
     Indicator("yield_spread", "장단기금리차(10Y-2Y)",   "leading", "fred",   "T10Y2Y",             "level"),
-    Indicator("philly_fed",   "필라델피아 연준 제조업",  "leading", "fred",   "GACDFSA066MSFRBPHI", "level", note="PMI 대체(서베이)"),
-    Indicator("empire_state", "엠파이어스테이트 제조업", "leading", "fred",   "GACDISA066MSFRBNY",  "level", note="PMI 대체(서베이)"),
-    Indicator("pmi_manual",   "ISM/S&P PMI(수동)",     "leading", "manual", "pmi_manual",         "level", note="선택 입력"),
+    Indicator("pmi_manual",   "제조업 PMI(ISM)",       "leading", "manual", "pmi_manual",         "level", note="1959~, 자동수집"),
     # ── 동행지표 ──────────────────────────────────────────────
     Indicator("indpro",       "산업생산",              "coincident", "fred", "INDPRO",  "yoy"),
     Indicator("retail",       "소매판매",              "coincident", "fred", "RSAFS",   "yoy"),
